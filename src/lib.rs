@@ -1,4 +1,6 @@
-#[derive(Clone, PartialOrd)]
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone, PartialOrd, Debug)]
 pub struct Bin {
     items: Vec<f32>,
     capacity: f32,
@@ -35,26 +37,98 @@ impl Bin {
         assert_eq!(self.total + self.residue, self.capacity);
     }
 
-    pub fn get_capacity(&self) -> f32 {
+    pub fn can_fit(&self, item: f32) -> bool {
+        item + self.total <= self.capacity
+    }
+
+    pub fn capacity(&self) -> f32 {
         return self.capacity;
     }
 
-    pub fn get_total(&self) -> f32 {
+    pub fn total(&self) -> f32 {
         return self.total;
     }
 
-    pub fn get_residue(&self) -> f32 {
+    pub fn residue(&self) -> f32 {
         return self.residue;
     }
 
-    pub fn get_items(&self) -> &Vec<f32> {
+    pub fn items(&self) -> &Vec<f32> {
         return &self.items;
     }
 }
 
-fn simple_lower_bound(items: Vec<f32>, bin_capacity: f32) -> f32 {
-    let sum_items = items.iter().fold(0.0, |sum, x| sum + x);
-    sum_items / (bin_capacity)
+fn simple_lower_bound(items: &Vec<f32>, bin_capacity: f32) -> f32 {
+    let sum_items: f32 = items.iter().sum();
+    sum_items / bin_capacity
+}
+
+fn stupid_bin_packing_outer(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
+    // Set upper bound to the number of items
+    let best_current = Arc::new(Mutex::new(Vec::new()));
+    for item in items.clone() {
+        let mut bin = Bin::new(bin_capacity);
+        bin.add(item);
+        let best_inner = Arc::clone(&best_current);
+        best_inner.lock().unwrap().push(bin);
+    }
+    println!("Starting from {:?}", best_current.clone());
+    stupid_bin_packing(
+        items.clone(),
+        Vec::new(),
+        bin_capacity,
+        best_current.clone(),
+    );
+    println!("Best found {:?}", best_current);
+    best_current.clone().lock().unwrap().clone()
+}
+
+fn stupid_bin_packing(
+    items: Vec<f32>,
+    filled_bins: Vec<Bin>,
+    bin_capacity: f32,
+    best_current: Arc<Mutex<Vec<Bin>>>,
+) {
+    println!("Currnt best {:?}", best_current.clone());
+    println!("Left items {:?}", items);
+    println!("filled_bins {:?}", filled_bins);
+    let simple_lower_bound = simple_lower_bound(&items, bin_capacity) + filled_bins.len() as f32;
+    // If the current possible lower bound is more than the current best, no need to check
+    if simple_lower_bound > best_current.clone().lock().unwrap().len() as f32 {
+        return;
+    }
+    // If no more values, and solution is better, replace solution
+    if items.len() == 0 {
+        if filled_bins.len() < best_current.clone().lock().unwrap().len() {
+            *best_current.clone().lock().unwrap() = filled_bins.clone();
+            println!("Updating best found");
+            println!("filled_bins {:?}", filled_bins);
+            println!("Curent best {:?}", best_current);
+        }
+        return;
+    }
+    // There must be at lease one, we checked for the 0 case
+    let mut items = items.clone();
+    let item = items.pop().unwrap();
+    for (idx, bin) in filled_bins.iter().enumerate() {
+        if bin.can_fit(item) {
+            let mut copy = filled_bins.clone();
+            copy[idx].add(item);
+            stupid_bin_packing(items.clone(), copy, bin_capacity, best_current.clone());
+        }
+    }
+    let mut bin = Bin::new(bin_capacity);
+    // Assume item can always fit in new bin
+    bin.add(item);
+    println!("New Bin {:?}", bin);
+    let mut filled_bins_copy = filled_bins.clone();
+    filled_bins_copy.push(bin);
+    stupid_bin_packing(
+        items.clone(),
+        filled_bins_copy,
+        bin_capacity,
+        best_current.clone(),
+    );
 }
 
 fn l2_lower_bound(items: Vec<f32>, bin_capacity: f32) -> f32 {
@@ -87,53 +161,26 @@ fn l2_lower_bound(items: Vec<f32>, bin_capacity: f32) -> f32 {
     sum_items / bin_capacity
 }
 
-fn best_fit_first(items: Vec<f32>, bin_capacity: f32) -> Vec<Vec<f32>> {
-    // Find the index of the best fitting bin, -1 if there is no good fit
-    fn find_best_fit_index(filled_bins: &Vec<Vec<f32>>, item: f32, bin_capacity: f32) -> i32 {
-        if filled_bins.len() == 0 {
-            return -1;
-        }
-        let mut best_residue = bin_capacity;
-        let mut best_bin_index = filled_bins.len();
-        for (bin_idx, bin) in filled_bins.iter().enumerate() {
-            let total: f32 = bin.clone().into_iter().sum();
-            if item + total > bin_capacity {
-                continue;
-            } else {
-                if bin_capacity - total < best_residue {
-                    best_residue = bin_capacity - total;
-                    best_bin_index = bin_idx;
-                }
-            }
-        }
-        if best_bin_index < filled_bins.len() {
-            best_bin_index as i32
-        } else {
-            -1
+fn best_fit_first(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
+    // Should be improved by returning a
+    fn find_best_fit(filled_bins: &Vec<Bin>, item: f32) -> Option<usize> {
+        let selected = filled_bins
+            .into_iter()
+            .enumerate()
+            .filter(|(_, x)| x.can_fit(item))
+            .fold(None, |min, (idx, x)| match min {
+                None => Some((idx, x)),
+                Some((idy, y)) => Some(if x.residue() < y.residue() {
+                    (idx, x)
+                } else {
+                    (idy, y)
+                }),
+            });
+        match selected {
+            Some((idx, _)) => Some(idx),
+            None => None,
         }
     }
-
-    // Should be improved by returning a
-    // fn find_best_fit(
-    //     filled_bins: &Vec<Vec<f32>>,
-    //     item: f32,
-    //     bin_capacity: f32,
-    // ) -> Option<&Vec<f32>> {
-    //     let possible_bins = filled_bins
-    //         .into_iter()
-    //         .filter(|bin: Vec<f32>| bin.iter().sum() + item <= bin_capacity);
-    //     let selected = possible_bins.into_iter().fold(None, |min, x| match min {
-    //         None => Some(x),
-    //         Some(y) => Some(
-    //             if bin_capacity - x.iter().sum() < bin_capacity - y.iter().sum() {
-    //                 x
-    //             } else {
-    //                 y
-    //             },
-    //         ),
-    //     });
-    //     selected
-    // }
 
     let mut filled_bins = Vec::new();
 
@@ -141,24 +188,28 @@ fn best_fit_first(items: Vec<f32>, bin_capacity: f32) -> Vec<Vec<f32>> {
     sorted_items.sort_by(|a, b| a.partial_cmp(b).unwrap());
     while sorted_items.len() > 0 {
         let largest = sorted_items.pop().unwrap();
-        let best_bin_index = find_best_fit_index(&filled_bins, largest, bin_capacity);
-        if best_bin_index >= 0 {
-            filled_bins[best_bin_index as usize].push(largest);
-        } else {
-            filled_bins.push(vec![largest])
+        let best_bin_index = find_best_fit(&filled_bins, largest);
+        match best_bin_index {
+            Some(best_bin_index) => filled_bins[best_bin_index].add(largest),
+            None => {
+                let mut new_bin = Bin::new(bin_capacity);
+                new_bin.add(largest);
+                filled_bins.push(new_bin);
+            }
         }
     }
+    println!("filled bins {:?}", filled_bins);
     filled_bins
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{best_fit_first, l2_lower_bound, simple_lower_bound};
+    use super::{best_fit_first, l2_lower_bound, simple_lower_bound, stupid_bin_packing_outer};
 
     #[test]
     fn test_simple_lower_bound() {
         assert_eq!(
-            simple_lower_bound(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0),
+            simple_lower_bound(&vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0),
             3.0
         )
     }
@@ -179,6 +230,11 @@ mod tests {
     #[test]
     fn test_best_fit_first() {
         best_fit_first(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0);
+    }
+
+    #[test]
+    fn test_stupid_bin_packing() {
+        stupid_bin_packing_outer(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0);
     }
 
 }
