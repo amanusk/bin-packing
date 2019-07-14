@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::thread;
 
 #[derive(Clone, PartialOrd, Debug)]
 pub struct Bin {
@@ -123,6 +124,8 @@ fn stupid_bin_packing(
         }
         return;
     }
+    let mut children = vec![];
+
     for (item_idx, item) in items.clone().into_iter().enumerate() {
         // There must be at lease one, we checked for the 0 case
         let mut items_copy = items.clone();
@@ -134,18 +137,25 @@ fn stupid_bin_packing(
                 stupid_bin_packing(items_copy.clone(), copy, bin_capacity, best_current.clone());
             }
         }
+        let best_current_copy = best_current.clone();
         let mut bin = Bin::new(bin_capacity);
         // Assume item can always fit in new bin
         bin.add(item);
         //println!("New Bin {:?}", bin);
         let mut filled_bins_copy = filled_bins.clone();
         filled_bins_copy.push(bin);
-        stupid_bin_packing(
-            items_copy.clone(),
-            filled_bins_copy,
-            bin_capacity,
-            best_current.clone(),
-        );
+        children.push(thread::spawn(move || {
+            stupid_bin_packing(
+                items_copy.clone(),
+                filled_bins_copy,
+                bin_capacity,
+                best_current_copy.clone(),
+            )
+        }));
+    }
+    for child in children {
+        // Wait for the thread to finish. Returns a result.
+        let _ = child.join();
     }
 }
 
