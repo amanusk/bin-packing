@@ -73,6 +73,14 @@ fn stupid_bin_packing_outer(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
         best_inner.lock().unwrap().push(bin);
     }
     println!("Starting from {:?}", best_current.clone());
+    println!(
+        "Simple lower bound {}",
+        simple_lower_bound(&items, bin_capacity).ceil()
+    );
+    println!(
+        "l2 lower bound {}",
+        l2_lower_bound(&items, bin_capacity).ceil()
+    );
     stupid_bin_packing(
         items.clone(),
         Vec::new(),
@@ -80,6 +88,10 @@ fn stupid_bin_packing_outer(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
         best_current.clone(),
     );
     println!("Best found {:?}", best_current);
+    println!(
+        "Best found bins {:?}",
+        best_current.clone().lock().unwrap().len()
+    );
     best_current.clone().lock().unwrap().clone()
 }
 
@@ -89,12 +101,12 @@ fn stupid_bin_packing(
     bin_capacity: f32,
     best_current: Arc<Mutex<Vec<Bin>>>,
 ) {
-    println!("Currnt best {:?}", best_current.clone());
-    println!("Left items {:?}", items);
-    println!("filled_bins {:?}", filled_bins);
-    let simple_lower_bound = simple_lower_bound(&items, bin_capacity) + filled_bins.len() as f32;
+    //println!("Currnt best {:?}", best_current.clone());
+    //println!("Left items {:?}", items);
+    //println!("filled_bins {:?}", filled_bins);
+    let simple_lower_bound = l2_lower_bound(&items, bin_capacity).ceil() + filled_bins.len() as f32;
     // If the current possible lower bound is more than the current best, no need to check
-    if simple_lower_bound > best_current.clone().lock().unwrap().len() as f32 {
+    if simple_lower_bound >= best_current.clone().lock().unwrap().len() as f32 {
         return;
     }
     // If no more values, and solution is better, replace solution
@@ -104,34 +116,40 @@ fn stupid_bin_packing(
             println!("Updating best found");
             println!("filled_bins {:?}", filled_bins);
             println!("Curent best {:?}", best_current);
+            println!(
+                "Curent best bins {:?}",
+                best_current.clone().lock().unwrap().len()
+            );
         }
         return;
     }
-    // There must be at lease one, we checked for the 0 case
-    let mut items = items.clone();
-    let item = items.pop().unwrap();
-    for (idx, bin) in filled_bins.iter().enumerate() {
-        if bin.can_fit(item) {
-            let mut copy = filled_bins.clone();
-            copy[idx].add(item);
-            stupid_bin_packing(items.clone(), copy, bin_capacity, best_current.clone());
+    for (item_idx, item) in items.clone().into_iter().enumerate() {
+        // There must be at lease one, we checked for the 0 case
+        let mut items_copy = items.clone();
+        items_copy.remove(item_idx);
+        for (idx, bin) in filled_bins.iter().enumerate() {
+            if bin.can_fit(item) {
+                let mut copy = filled_bins.clone();
+                copy[idx].add(item);
+                stupid_bin_packing(items_copy.clone(), copy, bin_capacity, best_current.clone());
+            }
         }
+        let mut bin = Bin::new(bin_capacity);
+        // Assume item can always fit in new bin
+        bin.add(item);
+        //println!("New Bin {:?}", bin);
+        let mut filled_bins_copy = filled_bins.clone();
+        filled_bins_copy.push(bin);
+        stupid_bin_packing(
+            items_copy.clone(),
+            filled_bins_copy,
+            bin_capacity,
+            best_current.clone(),
+        );
     }
-    let mut bin = Bin::new(bin_capacity);
-    // Assume item can always fit in new bin
-    bin.add(item);
-    println!("New Bin {:?}", bin);
-    let mut filled_bins_copy = filled_bins.clone();
-    filled_bins_copy.push(bin);
-    stupid_bin_packing(
-        items.clone(),
-        filled_bins_copy,
-        bin_capacity,
-        best_current.clone(),
-    );
 }
 
-fn l2_lower_bound(items: Vec<f32>, bin_capacity: f32) -> f32 {
+fn l2_lower_bound(items: &Vec<f32>, bin_capacity: f32) -> f32 {
     let mut sorted_items = items.clone();
     sorted_items.sort_by(|a, b| b.partial_cmp(a).unwrap());
     let mut overflow = 0.0;
@@ -216,13 +234,16 @@ mod tests {
 
     #[test]
     fn test_l2_lower_bound_1() {
-        assert_eq!(l2_lower_bound(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0), 3.0)
+        assert_eq!(
+            l2_lower_bound(&vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0),
+            3.0
+        )
     }
 
     #[test]
     fn test_l2_lower_bound_2() {
         assert_eq!(
-            l2_lower_bound(vec![99.0, 97.0, 94.0, 93.0, 8.0, 5.0, 4.0, 2.0], 100.0),
+            l2_lower_bound(&vec![99.0, 97.0, 94.0, 93.0, 8.0, 5.0, 4.0, 2.0], 100.0),
             5.0
         )
     }
@@ -231,10 +252,47 @@ mod tests {
     fn test_best_fit_first() {
         best_fit_first(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0);
     }
+    #[test]
+    fn test_stupid_bin_packing_very_simple() {
+        stupid_bin_packing_outer(vec![1.0, 6.0], 7.0);
+    }
 
     #[test]
-    fn test_stupid_bin_packing() {
+    fn test_stupid_bin_packing_simple() {
         stupid_bin_packing_outer(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0);
+    }
+
+    #[test]
+    fn test_stupid_bin_packing_gils() {
+        stupid_bin_packing_outer(
+            vec![25.0, 42.0, 13.0, 31.0, 34.0, 59.0, 13.0, 36.0, 1.0, 61.0],
+            64.0,
+        );
+    }
+
+    #[test]
+    fn test_stupid_bin_packing_paper() {
+        stupid_bin_packing_outer(
+            vec![
+                100.0, 98.0, 96.0, 93.0, 91.0, 87.0, 81.0, 59.0, 58.0, 55.0, 50.0, 43.0, 22.0,
+                21.0, 20.0, 15.0, 14.0, 10.0, 8.0, 6.0, 5.0, 4.0, 3.0, 1.0,
+            ],
+            100.0,
+        );
+    }
+
+    #[test]
+    fn test_stupid_bin_packing_long() {
+        stupid_bin_packing_outer(
+            vec![
+                100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0, 50.0,
+                43.0, 22.0, 21.0, 20.0, 15.0, 14.0, 11.0, 10.0, 8.0, 8.0, 6.0, 5.0, 5.0, 4.0, 3.0,
+                100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0, 50.0,
+                43.0, 22.0, 21.0, 20.0, 15.0, 14.0, 11.0, 10.0, 8.0, 8.0, 6.0, 5.0, 5.0, 4.0, 3.0,
+                1.0,
+            ],
+            100.0,
+        );
     }
 
 }
