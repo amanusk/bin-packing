@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 #[derive(Clone, PartialOrd, Debug)]
 pub struct Bin {
@@ -64,7 +63,7 @@ fn simple_lower_bound(items: &Vec<f32>, bin_capacity: f32) -> f32 {
     sum_items / bin_capacity
 }
 
-fn stupid_bin_packing_outer(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
+pub fn stupid_bin_packing_outer(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
     // Set upper bound to the number of items
     let best_current = Arc::new(Mutex::new(Vec::new()));
     for item in items.clone() {
@@ -102,12 +101,9 @@ fn stupid_bin_packing(
     bin_capacity: f32,
     best_current: Arc<Mutex<Vec<Bin>>>,
 ) {
-    //println!("Currnt best {:?}", best_current.clone());
-    //println!("Left items {:?}", items);
-    //println!("filled_bins {:?}", filled_bins);
-    let simple_lower_bound = l2_lower_bound(&items, bin_capacity).ceil() + filled_bins.len() as f32;
+    let lower_bound = l2_lower_bound(&items, bin_capacity).ceil() + filled_bins.len() as f32;
     // If the current possible lower bound is more than the current best, no need to check
-    if simple_lower_bound >= best_current.clone().lock().unwrap().len() as f32 {
+    if lower_bound >= best_current.clone().lock().unwrap().len() as f32 {
         return;
     }
     // If no more values, and solution is better, replace solution
@@ -124,7 +120,6 @@ fn stupid_bin_packing(
         }
         return;
     }
-    let mut children = vec![];
 
     for (item_idx, item) in items.clone().into_iter().enumerate() {
         // There must be at lease one, we checked for the 0 case
@@ -144,18 +139,12 @@ fn stupid_bin_packing(
         //println!("New Bin {:?}", bin);
         let mut filled_bins_copy = filled_bins.clone();
         filled_bins_copy.push(bin);
-        children.push(thread::spawn(move || {
-            stupid_bin_packing(
-                items_copy.clone(),
-                filled_bins_copy,
-                bin_capacity,
-                best_current_copy.clone(),
-            )
-        }));
-    }
-    for child in children {
-        // Wait for the thread to finish. Returns a result.
-        let _ = child.join();
+        stupid_bin_packing(
+            items_copy.clone(),
+            filled_bins_copy,
+            bin_capacity,
+            best_current_copy.clone(),
+        );
     }
 }
 
@@ -189,7 +178,7 @@ fn l2_lower_bound(items: &Vec<f32>, bin_capacity: f32) -> f32 {
     sum_items / bin_capacity
 }
 
-fn best_fit_first(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
+pub fn best_fit_first(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
     // Should be improved by returning a
     fn find_best_fit(filled_bins: &Vec<Bin>, item: f32) -> Option<usize> {
         let selected = filled_bins
@@ -281,6 +270,14 @@ mod tests {
     }
 
     #[test]
+    fn test_stupid_bin_packing_gils2() {
+        stupid_bin_packing_outer(
+            vec![2.0, 63.0, 12.0, 18.0, 34.0, 28.0, 46.0, 51.0, 53.0, 20.0],
+            64.0,
+        );
+    }
+
+    #[test]
     fn test_stupid_bin_packing_paper() {
         stupid_bin_packing_outer(
             vec![
@@ -293,6 +290,20 @@ mod tests {
 
     #[test]
     fn test_stupid_bin_packing_long() {
+        stupid_bin_packing_outer(
+            vec![
+                100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0, 50.0,
+                43.0, 22.0, 21.0, 20.0, 15.0, 14.0, 11.0, 10.0, 8.0, 8.0, 6.0, 5.0, 5.0, 4.0, 3.0,
+                100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0, 50.0,
+                43.0, 25.0, 22.0, 21.0, 20.0, 15.0, 14.0, 11.0, 10.0, 8.0, 8.0, 6.0, 5.0, 5.0, 4.0,
+                3.0, 1.0,
+            ],
+            100.0,
+        );
+    }
+
+    #[test]
+    fn test_stupid_bin_packing_very_long() {
         stupid_bin_packing_outer(
             vec![
                 100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0, 50.0,
