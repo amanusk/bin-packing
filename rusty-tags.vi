@@ -1,0 +1,23 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+Bin	/home/amanusk/rust/bin-packing/src/lib.rs	/^pub struct Bin {$/;"	s
+add	/home/amanusk/rust/bin-packing/src/lib.rs	/^    pub fn add(&mut self, item: f32) {$/;"	f
+best_fit_first	/home/amanusk/rust/bin-packing/src/lib.rs	/^fn best_fit_first(items: Vec<f32>, bin_capacity: f32) -> Vec<Vec<f32>> {$/;"	f
+eq	/home/amanusk/rust/bin-packing/src/lib.rs	/^    fn eq(&self, other: &Bin) -> bool {$/;"	f
+find_best_fit_index	/home/amanusk/rust/bin-packing/src/lib.rs	/^    fn find_best_fit_index(filled_bins: &Vec<Vec<f32>>, item: f32, bin_capacity: f32) -> i32 {$/;"	f
+get_capacity	/home/amanusk/rust/bin-packing/src/lib.rs	/^    pub fn get_capacity(&self) -> f32 {$/;"	f
+get_items	/home/amanusk/rust/bin-packing/src/lib.rs	/^    pub fn get_items(&self) -> &Vec<f32> {$/;"	f
+get_residue	/home/amanusk/rust/bin-packing/src/lib.rs	/^    pub fn get_residue(&self) -> f32 {$/;"	f
+get_total	/home/amanusk/rust/bin-packing/src/lib.rs	/^    pub fn get_total(&self) -> f32 {$/;"	f
+l2_lower_bound	/home/amanusk/rust/bin-packing/src/lib.rs	/^fn l2_lower_bound(items: Vec<f32>, bin_capacity: f32) -> f32 {$/;"	f
+new	/home/amanusk/rust/bin-packing/src/lib.rs	/^    pub fn new(capacity: f32) -> Bin {$/;"	f
+simple_lower_bound	/home/amanusk/rust/bin-packing/src/lib.rs	/^fn simple_lower_bound(items: Vec<f32>, bin_capacity: f32) -> f32 {$/;"	f
+test_best_fit_first	/home/amanusk/rust/bin-packing/src/lib.rs	/^    fn test_best_fit_first() {$/;"	f
+test_l2_lower_bound_1	/home/amanusk/rust/bin-packing/src/lib.rs	/^    fn test_l2_lower_bound_1() {$/;"	f
+test_l2_lower_bound_2	/home/amanusk/rust/bin-packing/src/lib.rs	/^    fn test_l2_lower_bound_2() {$/;"	f
+test_simple_lower_bound	/home/amanusk/rust/bin-packing/src/lib.rs	/^    fn test_simple_lower_bound() {$/;"	f
+tests	/home/amanusk/rust/bin-packing/src/lib.rs	/^mod tests {$/;"	m
