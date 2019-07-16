@@ -1,8 +1,5 @@
 use itertools::Itertools;
-use num_cpus;
-use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
-use threadpool::ThreadPool;
 
 #[derive(Clone, PartialOrd, Debug)]
 pub struct Bin {
@@ -115,62 +112,109 @@ fn is_dominant(v1: &Vec<f32>, v2: &Vec<f32>) -> bool {
         return false;
     }
     if v1.len() == 1 {
+        println!("Comapring {}, {}", v1[0], v2[0]);
         return v1[0] > v2[0];
     }
     false
 }
 
+fn dominated(v1: &Vec<f32>, all: &Vec<&Vec<f32>>) -> bool {
+    let dominated = false;
+    for v in all.iter() {
+        if is_dominant(v, v1) {
+            return true;
+        }
+    }
+
+    return dominated;
+}
+
 pub fn get_all_undominated(items: &Vec<f32>, limit: f32) {
     let mut all_possible = Vec::new();
     for i in 0..items.len() {
-        all_possible.extend(items.into_iter().combinations(i).filter(|x: &Vec<&f32>| {
-            x.into_iter().fold(0.0, |sum, y| sum + *y) <= limit && x.len() > 0
-        }));
+        all_possible.extend(
+            items.iter().combinations(i).filter(|x: &Vec<&f32>| {
+                x.iter().fold(0.0, |sum, y| sum + *y) <= limit && x.len() > 0
+            }),
+        );
     }
-    for (a, b) in all_possible.into_iter().tuple_combinations() {
-        println!("{:?}, {:?}", a, b);
+    let mut all_possible_values = Vec::new();
+    for vec in all_possible.iter() {
+        let mut new_vec = Vec::new();
+        for item in vec {
+            new_vec.push(**item);
+        }
+        all_possible_values.push(new_vec.clone());
     }
+    // for (a, b) in all_possible.iter().tuple_combinations() {
+    //     println!("{:?}, {:?}", a, b);
+    // }
+    // println!("All possible");
+    // all_possible_values.iter().for_each(|x| println!("{:?}", x));
+    // let mut undominated = Vec::new();
+    // all_possible_values.iter().for_each(|x: &Vec<f32>| {
+    //     if !dominated(x, all_possible) {
+    //         println!("Adding {:?}", x);
+    //         undominated.push(x);
+    //     }
+    // });
+    // println!("Undomintated");
+    // undominated.iter().for_each(|x| println!("{:?}", x));
 }
 
-pub fn stupid_bin_packing_outer(items: Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
+pub fn stupid_bin_packing_outer(items: &Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
     // Set upper bound to the number of items
     let best_current = Arc::new(Mutex::new(Vec::new()));
+    let nodes_count = Arc::new(Mutex::new(0_u64));
     println!(
         "Simple lower bound {}",
         simple_lower_bound(&items, bin_capacity).ceil()
     );
-    println!(
-        "l2 lower bound {}",
-        l2_lower_bound(&items, bin_capacity).ceil()
-    );
+    let l2_lower_bound = l2_lower_bound(&items, bin_capacity).ceil();
+    println!("l2 lower bound {}", l2_lower_bound);
 
-    let n_workers = num_cpus::get();
-    let pool = ThreadPool::new(n_workers);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus::get())
+        .build()
+        .unwrap();
 
     // Option to create worst solution
-    for item in items.clone() {
-        let mut bin = Bin::new(bin_capacity);
-        bin.add(item);
-        best_current.lock().unwrap().push(bin);
+    // for item in items.clone() {
+    //     let mut bin = Bin::new(bin_capacity);
+    //     bin.add(item);
+    //     best_current.lock().unwrap().push(bin);
+    // }
+
+    *best_current.lock().unwrap() = best_fit_first(&items, bin_capacity);
+    println!(
+        "Best fit first: {} bins",
+        &best_current.lock().unwrap().len(),
+    );
+    println!("Starting from {:?}", best_current.lock().unwrap());
+    println!("Best fit first {:?}", &best_current.lock().unwrap());
+    assert!(best_current.lock().unwrap().len() >= l2_lower_bound as usize);
+    if best_current.lock().unwrap().len() <= l2_lower_bound as usize {
+        // Finish
+        println!("Best found {:?}", &best_current);
+        println!("Best found bins {:?}", &best_current.lock().unwrap().len());
+        return Arc::clone(&best_current).lock().unwrap().clone();
     }
 
-    println!("Starting from {:?}", best_current.clone());
-    // *best_current.lock().unwrap() = best_fit_first(&items, bin_capacity);
-    // println!(
-    //     "Best fit first: {} bins",
-    //     &best_current.lock().unwrap().len(),
-    // );
-    // println!("Best fit first {:?}", &best_current.lock().unwrap(),);
-
     // Create a new item list for every recursion, so they could (potentially) happen in parallel
-    let tx = tx.clone();
     let cloned_best = Arc::clone(&best_current);
-    pool.execute(move || {
-        stupid_bin_packing(items, Vec::new(), bin_capacity, cloned_best);
+    let nodes_count_copy = Arc::clone(&nodes_count);
+    pool.install(move || {
+        stupid_bin_packing(
+            items.clone(),
+            Vec::new(),
+            bin_capacity,
+            cloned_best,
+            nodes_count_copy,
+        );
     });
-    pool.join();
     println!("Best found {:?}", &best_current);
     println!("Best found bins {:?}", &best_current.lock().unwrap().len());
+    println!("Checked options {}", nodes_count.lock().unwrap());
     Arc::clone(&best_current).lock().unwrap().clone()
 }
 
@@ -179,14 +223,16 @@ fn stupid_bin_packing(
     filled_bins: Vec<Bin>,
     bin_capacity: f32,
     best_current: Arc<Mutex<Vec<Bin>>>,
+    nodes_count: Arc<Mutex<u64>>,
 ) {
-    let lower_bound = l2_lower_bound(&items, bin_capacity).ceil() + filled_bins.len() as f32;
+    let lower_bound = simple_lower_bound(&items, bin_capacity).ceil() + filled_bins.len() as f32;
     // If the current possible lower bound is more than the current best, no need to check
-    if lower_bound >= best_current.lock().unwrap().len() as f32 {
+    if lower_bound > best_current.lock().unwrap().len() as f32 {
         return;
     }
     // If no more values, and solution is better, replace solution
     if items.len() == 0 {
+        *nodes_count.lock().unwrap() += 1;
         if filled_bins.len() < best_current.lock().unwrap().len() {
             *best_current.lock().unwrap() = filled_bins.clone();
             println!("Updating best found");
@@ -204,28 +250,42 @@ fn stupid_bin_packing(
         for (idx, bin) in filled_bins.iter().enumerate() {
             if bin.can_fit(*item) {
                 let mut filled_bins_copy = filled_bins.clone();
+                let best_current_copy = Arc::clone(&best_current);
+                let items_copy_copy = items_copy.clone();
+                let nodes_count_copy = Arc::clone(&nodes_count);
                 filled_bins_copy[idx].add(*item);
-                stupid_bin_packing(
-                    items_copy.clone(),
-                    filled_bins_copy,
-                    bin_capacity,
-                    best_current.clone(),
-                );
+                rayon::scope(|s| {
+                    s.spawn(move |_| {
+                        stupid_bin_packing(
+                            items_copy_copy,
+                            filled_bins_copy,
+                            bin_capacity,
+                            best_current_copy,
+                            nodes_count_copy,
+                        )
+                    })
+                });
             }
         }
         let best_current_copy = Arc::clone(&best_current);
+        let nodes_count_copy = Arc::clone(&nodes_count);
         let mut bin = Bin::new(bin_capacity);
         // Assume item can always fit in new bin
         bin.add(*item);
         //println!("New Bin {:?}", bin);
         let mut filled_bins_copy = filled_bins.clone();
         filled_bins_copy.push(bin);
-        stupid_bin_packing(
-            items_copy.clone(),
-            filled_bins_copy,
-            bin_capacity,
-            best_current_copy,
-        );
+        rayon::scope(|s| {
+            s.spawn(move |_| {
+                stupid_bin_packing(
+                    items_copy,
+                    filled_bins_copy,
+                    bin_capacity,
+                    best_current_copy,
+                    nodes_count_copy,
+                )
+            })
+        });
     }
 }
 
@@ -303,27 +363,38 @@ mod tests {
     }
     #[test]
     fn test_stupid_bin_packing_very_simple() {
-        stupid_bin_packing_outer(vec![1.0, 6.0], 7.0);
+        assert_eq!(stupid_bin_packing_outer(&vec![1.0, 6.0], 7.0).len(), 1);
     }
 
     #[test]
     fn test_stupid_bin_packing_simple() {
-        stupid_bin_packing_outer(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0);
+        assert_eq!(
+            stupid_bin_packing_outer(&vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 7.0).len(),
+            3
+        );
     }
 
     #[test]
-    fn test_stupid_bin_packing_gils() {
-        stupid_bin_packing_outer(
-            vec![25.0, 42.0, 13.0, 31.0, 34.0, 59.0, 13.0, 36.0, 1.0, 61.0],
-            64.0,
+    fn test_stupid_bin_packing_gils1() {
+        assert_eq!(
+            stupid_bin_packing_outer(
+                &vec![25.0, 42.0, 13.0, 31.0, 34.0, 59.0, 13.0, 36.0, 1.0, 61.0],
+                64.0,
+            )
+            .len(),
+            6
         );
     }
 
     #[test]
     fn test_stupid_bin_packing_gils2() {
-        stupid_bin_packing_outer(
-            vec![2.0, 63.0, 12.0, 18.0, 34.0, 28.0, 46.0, 51.0, 53.0, 20.0],
-            64.0,
+        assert_eq!(
+            stupid_bin_packing_outer(
+                &vec![2.0, 63.0, 12.0, 18.0, 34.0, 28.0, 46.0, 51.0, 53.0, 20.0],
+                64.0,
+            )
+            .len(),
+            6
         );
     }
 
@@ -331,7 +402,7 @@ mod tests {
     fn test_stupid_bin_packing_gils3() {
         assert_eq!(
             stupid_bin_packing_outer(
-                vec![38.0, 59.0, 53.0, 48.0, 40.0, 55.0, 60.0, 62.0, 3.0, 64.0],
+                &vec![38.0, 59.0, 53.0, 48.0, 40.0, 55.0, 60.0, 62.0, 3.0, 64.0],
                 64.0,
             )
             .len(),
@@ -343,7 +414,7 @@ mod tests {
     fn test_stupid_bin_packing_paper() {
         assert_eq!(
             stupid_bin_packing_outer(
-                vec![
+                &vec![
                     100.0, 98.0, 96.0, 93.0, 91.0, 87.0, 81.0, 59.0, 58.0, 55.0, 50.0, 43.0, 22.0,
                     21.0, 20.0, 15.0, 14.0, 10.0, 8.0, 6.0, 5.0, 4.0, 3.0, 1.0,
                 ],
@@ -358,7 +429,7 @@ mod tests {
     fn test_stupid_bin_packing_long() {
         assert_eq!(
             stupid_bin_packing_outer(
-                vec![
+                &vec![
                     100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0, 50.0,
                     43.0, 22.0, 21.0, 20.0, 15.0, 14.0, 11.0, 10.0, 8.0, 8.0, 6.0, 5.0, 5.0, 4.0,
                     3.0, 100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0,
@@ -373,16 +444,41 @@ mod tests {
     }
 
     #[test]
-    fn test_stupid_bin_packing_very_long() {
-        stupid_bin_packing_outer(
-            vec![
-                100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0, 50.0,
-                43.0, 22.0, 21.0, 20.0, 15.0, 14.0, 11.0, 10.0, 8.0, 8.0, 6.0, 5.0, 5.0, 4.0, 3.0,
-                100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 55.0, 50.0,
-                43.0, 22.0, 21.0, 20.0, 15.0, 14.0, 11.0, 10.0, 8.0, 8.0, 6.0, 5.0, 5.0, 4.0, 3.0,
-                1.0,
-            ],
-            100.0,
+    fn test_stupid_bin_packing_med() {
+        assert_eq!(
+            stupid_bin_packing_outer(
+                &vec![
+                    100.0, 98.0, 96.0, 97.0, 93.0, 91.0, 87.0, 83.0, 81.0, 59.0, 58.0, 53.0, 50.0,
+                    14.0, 11.0, 10.0, 8.0, 8.0, 6.0, 5.0, 5.0, 4.0, 5.0, 4.0, 3.0, 1.0, 8.0, 9.0,
+                    11.0, 14.0, 11.0, 17.0, 1.0, 11.0, 14.0, 11.0, 17.0, 1.0, 11.0, 14.0, 11.0,
+                    11.0, 14.0, 11.0, 17.0, 1.0, 11.0, 14.0, 11.0, 17.0, 1.0, 11.0, 14.0, 11.0,
+                    11.0, 14.0, 11.0, 17.0, 1.0, 11.0, 14.0, 11.0, 17.0, 1.0, 11.0, 14.0, 11.0,
+                    17.0, 1.0, 11.0, 14.0, 11.0, 17.0, 1.0, 17.0, 1.0, 11.0, 14.0, 11.0, 17.0, 1.0,
+                ],
+                100.0,
+            )
+            .len(),
+            18,
+        );
+    }
+
+    #[test]
+    fn test_stupid_bin_packing_optimal_short() {
+        assert_eq!(
+            stupid_bin_packing_outer(&vec![5.0, 4.0, 3.0, 3.0, 3.0, 2.0], 10.0).len(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_stupid_bin_packing_optimal_long() {
+        assert_eq!(
+            stupid_bin_packing_outer(
+                &vec![5.0, 4.0, 3.0, 3.0, 3.0, 2.0, 5.0, 4.0, 3.0, 3.0, 3.0, 2.0],
+                10.0
+            )
+            .len(),
+            4
         );
     }
 
