@@ -1,5 +1,7 @@
+#![feature(test)]
+
 use itertools::Itertools;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone, PartialOrd, Debug)]
 pub struct Bin {
@@ -164,14 +166,13 @@ pub fn get_all_undominated(items: &Vec<f32>, limit: f32) {
 
 pub fn stupid_bin_packing_outer(items: &Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
     // Set upper bound to the number of items
-    let best_current = Arc::new(Mutex::new(Vec::new()));
-    let nodes_count = Arc::new(Mutex::new(0_u64));
-    println!(
-        "Simple lower bound {}",
-        simple_lower_bound(&items, bin_capacity).ceil()
-    );
+    let best_current = Arc::new(RwLock::new(Vec::new()));
+    //println!(
+    //    "Simple lower bound {}",
+    //    simple_lower_bound(&items, bin_capacity).ceil()
+    //);
     let l2_lower_bound = l2_lower_bound(&items, bin_capacity).ceil();
-    println!("l2 lower bound {}", l2_lower_bound);
+    //println!("l2 lower bound {}", l2_lower_bound);
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_cpus::get())
@@ -182,63 +183,53 @@ pub fn stupid_bin_packing_outer(items: &Vec<f32>, bin_capacity: f32) -> Vec<Bin>
     // for item in items.clone() {
     //     let mut bin = Bin::new(bin_capacity);
     //     bin.add(item);
-    //     best_current.lock().unwrap().push(bin);
+    //     best_current.read().unwrap().push(bin);
     // }
 
-    *best_current.lock().unwrap() = best_fit_first(&items, bin_capacity);
-    println!(
-        "Best fit first: {} bins",
-        &best_current.lock().unwrap().len(),
-    );
-    println!("Starting from {:?}", best_current.lock().unwrap());
-    println!("Best fit first {:?}", &best_current.lock().unwrap());
-    assert!(best_current.lock().unwrap().len() >= l2_lower_bound as usize);
-    if best_current.lock().unwrap().len() <= l2_lower_bound as usize {
+    *best_current.write().unwrap() = best_fit_first(&items, bin_capacity);
+    //println!(
+    //    "Best fit first: {} bins",
+    //    &best_current.read().unwrap().len(),
+    //);
+    //println!("Starting from {:?}", best_current.read().unwrap());
+    //println!("Best fit first {:?}", &best_current.read().unwrap());
+    assert!(best_current.read().unwrap().len() >= l2_lower_bound as usize);
+    if best_current.read().unwrap().len() <= l2_lower_bound as usize {
         // Finish
-        println!("Best found {:?}", &best_current);
-        println!("Best found bins {:?}", &best_current.lock().unwrap().len());
-        return Arc::clone(&best_current).lock().unwrap().clone();
+        // println!("Best found {:?}", &best_current);
+        // println!("Best found bins {:?}", &best_current.read().unwrap().len());
+        return Arc::clone(&best_current).read().unwrap().clone();
     }
 
     // Create a new item list for every recursion, so they could (potentially) happen in parallel
     let cloned_best = Arc::clone(&best_current);
-    let nodes_count_copy = Arc::clone(&nodes_count);
     pool.install(move || {
-        stupid_bin_packing(
-            items.clone(),
-            Vec::new(),
-            bin_capacity,
-            cloned_best,
-            nodes_count_copy,
-        );
+        stupid_bin_packing(items.clone(), Vec::new(), bin_capacity, cloned_best);
     });
-    println!("Best found {:?}", &best_current);
-    println!("Best found bins {:?}", &best_current.lock().unwrap().len());
-    println!("Checked options {}", nodes_count.lock().unwrap());
-    Arc::clone(&best_current).lock().unwrap().clone()
+    // println!("Best found {:?}", &best_current);
+    // println!("Best found bins {:?}", &best_current.read().unwrap().len());
+    Arc::clone(&best_current).read().unwrap().clone()
 }
 
 fn stupid_bin_packing(
     items: Vec<f32>,
     filled_bins: Vec<Bin>,
     bin_capacity: f32,
-    best_current: Arc<Mutex<Vec<Bin>>>,
-    nodes_count: Arc<Mutex<u64>>,
+    best_current: Arc<RwLock<Vec<Bin>>>,
 ) {
     let lower_bound = simple_lower_bound(&items, bin_capacity).ceil() + filled_bins.len() as f32;
     // If the current possible lower bound is more than the current best, no need to check
-    if lower_bound > best_current.lock().unwrap().len() as f32 {
+    if lower_bound > best_current.read().unwrap().len() as f32 {
         return;
     }
     // If no more values, and solution is better, replace solution
     if items.len() == 0 {
-        *nodes_count.lock().unwrap() += 1;
-        if filled_bins.len() < best_current.lock().unwrap().len() {
-            *best_current.lock().unwrap() = filled_bins.clone();
-            println!("Updating best found");
-            println!("filled_bins {:?}", filled_bins);
-            println!("Curent best {:?}", best_current);
-            println!("Curent best bins {:?}", best_current.lock().unwrap().len());
+        if filled_bins.len() < best_current.read().unwrap().len() {
+            *best_current.write().unwrap() = filled_bins.clone();
+            // println!("Updating best found");
+            // println!("filled_bins {:?}", filled_bins);
+            // println!("Curent best {:?}", best_current);
+            // println!("Curent best bins {:?}", best_current.read().unwrap().len());
         }
         return;
     }
@@ -252,7 +243,6 @@ fn stupid_bin_packing(
                 let mut filled_bins_copy = filled_bins.clone();
                 let best_current_copy = Arc::clone(&best_current);
                 let items_copy_copy = items_copy.clone();
-                let nodes_count_copy = Arc::clone(&nodes_count);
                 filled_bins_copy[idx].add(*item);
                 rayon::scope(|s| {
                     s.spawn(move |_| {
@@ -261,14 +251,12 @@ fn stupid_bin_packing(
                             filled_bins_copy,
                             bin_capacity,
                             best_current_copy,
-                            nodes_count_copy,
                         )
                     })
                 });
             }
         }
         let best_current_copy = Arc::clone(&best_current);
-        let nodes_count_copy = Arc::clone(&nodes_count);
         let mut bin = Bin::new(bin_capacity);
         // Assume item can always fit in new bin
         bin.add(*item);
@@ -282,7 +270,6 @@ fn stupid_bin_packing(
                     filled_bins_copy,
                     bin_capacity,
                     best_current_copy,
-                    nodes_count_copy,
                 )
             })
         });
@@ -331,7 +318,10 @@ pub fn best_fit_first(items: &Vec<f32>, bin_capacity: f32) -> Vec<Bin> {
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
+
     use super::*;
+    use test::Bencher;
 
     #[test]
     fn test_simple_lower_bound() {
@@ -485,6 +475,11 @@ mod tests {
     #[test]
     fn test_get_all_undominated() {
         get_all_undominated(&vec![1.0, 2.0, 3.0, 4.0], 6.0);
+    }
+
+    #[bench]
+    fn bench_optimal_short(b: &mut Bencher) {
+        b.iter(|| stupid_bin_packing_outer(&vec![5.0, 4.0, 3.0, 3.0, 3.0, 2.0], 10.0));
     }
 
 }
